@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<title>Pixel Stretch Touch</title>
+<link rel="icon" href="data:,">
+<style>
+:root { --ink: #f4f2ee; --mute: #b9b5ad; --bar: rgba(16,16,18,.72); --edge: rgba(255,255,255,.18); --hot: #ff4d2e; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none;
+  background: #000; color: var(--ink); touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  font: 16px/1.4 system-ui, -apple-system, "Hiragino Sans", "Segoe UI", sans-serif;
+}
+#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#cam { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+#start {
+  position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 16px;
+  padding: calc(env(safe-area-inset-top, 0px) + 24px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  background: #000;
+}
+#start h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
+#start p { margin: 0 0 12px; color: var(--mute); }
+#start button { min-height: 88px; font-size: 22px; font-weight: 600; border-radius: 18px; }
+#start.hide { display: none; }
+#err {
+  display: none; margin-top: 8px; padding: 14px 16px; border-radius: 14px;
+  background: rgba(255,77,46,.16); border: 1px solid var(--hot); white-space: pre-line;
+}
+#err.show { display: block; }
+#hint {
+  position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 16px);
+  text-align: center; pointer-events: none; transition: opacity .6s; text-shadow: 0 1px 4px #000;
+}
+#dock {
+  position: fixed; left: 0; right: 0; bottom: 0; display: none;
+  padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(16px, env(safe-area-inset-left, 0px));
+  background: var(--bar); border-top: 1px solid var(--edge);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+#dock.show { display: block; }
+.line { display: flex; gap: 8px; align-items: center; }
+.line + .line { margin-top: 8px; }
+.line button { flex: 1; }
+button {
+  font: inherit; color: var(--ink); background: rgba(255,255,255,.08); touch-action: manipulation;
+  border: 1px solid var(--edge); border-radius: 14px; min-height: 56px; padding: 0 10px;
+}
+button.on { background: var(--hot); border-color: var(--hot); color: #fff; }
+label.knob { display: grid; grid-template-columns: 2.6em 1fr 3em; gap: 10px; align-items: center; min-height: 48px; }
+label.knob output { text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; }
+label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<video id="cam" playsinline muted autoplay></video>
+<div id="hint"></div>
+
+<div id="start">
+  <h1>Pixel Stretch Touch</h1>
+  <p>カメラを選ぶと映像が出ます。指でなぞると、触った所の色が帯になって伸びます。映像はこの端末の外に出ません。</p>
+  <button data-facing="user">インカメラ</button>
+  <button data-facing="environment">アウトカメラ</button>
+  <div id="err"></div>
+</div>
+
+<div id="dock">
+  <div class="line">
+    <button data-facing="user">イン</button>
+    <button data-facing="environment">アウト</button>
+    <button id="reset">リセット</button>
+    <button id="back">戻る: オフ</button>
+  </div>
+  <div class="line">
+    <label class="knob"><span>帯幅</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
+  </div>
+</div>
+
+<script type="x-shader/x-vertex" id="vert">#version 300 es
+// aPos: where to draw (CSS px, y down). aSrc: where to take the colour from (CSS px, y down).
+in vec2 aPos;
+in vec2 aSrc;
+in float aEdge;          // -1 .. 1 across a ribbon (0 for the background)
+uniform vec2 uView;      // CSS px
+uniform vec2 uCover;     // fraction of the video that is visible (cover fit)
+uniform float uMirror;   // 1 = flip left/right (front camera)
+out vec2 vUV;
+out float vEdge;
+void main() {
+  vec2 s = aSrc / uView;
+  vec2 uv = (s - 0.5) * uCover + 0.5;
+  if (uMirror > 0.5) uv.x = 1.0 - uv.x;
+  vUV = uv;
+  vEdge = aEdge;
+  vec2 p = aPos / uView * 2.0 - 1.0;
+  gl_Position = vec4(p.x, -p.y, 0.0, 1.0);
+}
+</script>
+<script type="x-shader/x-fragment" id="frag">#version 300 es
+precision highp float;
+uniform sampler2D uVideo;
+in vec2 vUV;
+in float vEdge;
+out vec4 outColor;
+void main() {
+  vec3 c = texture(uVideo, vUV).rgb;
+  // soften only the outermost pixel of the ribbon so its border does not stair-step
+  float e = abs(vEdge);
+  float w = max(fwidth(vEdge), 1e-4);
+  float a = 1.0 - smoothstep(1.0 - w * 1.5, 1.0, e);
+  outColor = vec4(c, a);
+}
+</script>
+
+<script>
+'use strict';
+const params = new URLSearchParams(location.search);
+const TEST = params.has('test');
+
+const $ = (id) => document.getElementById(id);
+const cv = $('stage'), video = $('cam'), startEl = $('start'), errEl = $('err'), dock = $('dock'), hint = $('hint');
+
+function showError(text) {
+  startEl.classList.remove('hide');
+  dock.classList.remove('show');
+  errEl.textContent = text;
+  errEl.classList.add('show');
+}
+
+// ---------- WebGL2 ----------
+const gl = cv.getContext('webgl2', { antialias: true, premultipliedAlpha: false, alpha: false, preserveDrawingBuffer: TEST });
+let prog = null;
+if (!gl) {
+  showError('この端末のブラウザーは WebGL2 に対応していないため表示できません。');
+} else {
+  const compile = (type, id) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, $(id).textContent.trim());
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  };
+  prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, 'vert'));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, 'frag'));
+  gl.bindAttribLocation(prog, 0, 'aPos');
+  gl.bindAttribLocation(prog, 1, 'aSrc');
+  gl.bindAttribLocation(prog, 2, 'aEdge');
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+}
+
+const FLOATS = 5; // aPos.xy, aSrc.xy, aEdge
+let vbo = null, vboCap = 0;
+const U = {};
+if (gl) {
+  for (const k of ['uView', 'uCover', 'uMirror', 'uVideo']) U[k] = gl.getUniformLocation(prog, k);
+  gl.bindVertexArray(gl.createVertexArray());
+  vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  const stride = FLOATS * 4;
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0);
+  gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8);
+  gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, stride, 16);
+  const tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+  gl.uniform1i(U.uVideo, 0);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+}
+
+let viewW = 1, viewH = 1;
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  viewW = window.innerWidth; viewH = window.innerHeight;
+  cv.width = Math.round(viewW * dpr);
+  cv.height = Math.round(viewH * dpr);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- camera / test source ----------
+let stream = null, mirror = false, facing = null, testCanvas = null;
+
+function stopStream() {
+  if (stream) for (const t of stream.getTracks()) t.stop();
+  stream = null;
+}
+
+function makeTestStream() {
+  // Moving test pattern drawn on a canvas, used instead of a real camera (?test=1)
+  if (!testCanvas) {
+    testCanvas = document.createElement('canvas');
+    testCanvas.width = 640; testCanvas.height = 480;
+    const g = testCanvas.getContext('2d');
+    const t0 = performance.now();
+    const draw = () => {
+      const t = (performance.now() - t0) / 1000;
+      const W = 640, H = 480;
+      for (let i = 0; i < 16; i++) {
+        g.fillStyle = `hsl(${(i * 23 + t * 40) % 360} 80% ${45 + 15 * Math.sin(i + t)}%)`;
+        g.fillRect(0, i * H / 16, W, H / 16 + 1);
+      }
+      for (let i = 0; i < 20; i++) { // thin vertical stripes so slices in any direction carry detail
+        g.fillStyle = i % 2 ? 'rgba(0,0,0,.28)' : 'rgba(255,255,255,.22)';
+        g.fillRect(((i * 37 + t * 25) % (W + 20)) - 10, 0, 6 + (i % 4) * 4, H);
+      }
+      for (let i = 0; i < 7; i++) {
+        const x = W / 2 + Math.cos(t * 0.7 + i) * 220, y = H / 2 + Math.sin(t * 1.1 + i * 2) * 160;
+        g.fillStyle = `hsl(${i * 51} 95% 60%)`;
+        g.beginPath(); g.arc(x, y, 34 + 8 * i, 0, Math.PI * 2); g.fill();
+      }
+      g.fillStyle = '#fff'; g.font = 'bold 64px sans-serif'; g.textAlign = 'center';
+      g.fillText('TEST ' + t.toFixed(1), W / 2, H / 2 + 22);
+      g.fillStyle = '#000'; g.fillRect(0, 0, 60, 60); g.fillStyle = '#fff'; g.fillText('L', 30, 52);
+      requestAnimationFrame(draw);
+    };
+    draw();
+  }
+  return testCanvas.captureStream(30);
+}
+
+function explain(e) {
+  const n = e && e.name;
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'カメラの使用が許可されませんでした。ブラウザーの設定でこのページのカメラを許可してから、もう一度ボタンを押してください。';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'このカメラが見つかりませんでした。もう一方のカメラを試してください。';
+  if (n === 'NotReadableError' || n === 'AbortError') return 'カメラを開けませんでした。ほかのアプリがカメラを使っていないか確かめてください。';
+  return 'カメラを開けませんでした（' + (n || 'エラー') + '）。';
+}
+
+// Called directly from the button's click handler, so iOS sees it as a user action.
+function openCamera(want) {
+  if (!gl) return;
+  errEl.classList.remove('show');
+  let req;
+  if (TEST) {
+    stopStream();
+    req = Promise.resolve(makeTestStream());
+  } else {
+    if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showError('カメラは HTTPS のページでしか使えません。https:// で始まるアドレスで開き直してください。');
+      return;
+    }
+    stopStream(); // release the old camera first (iOS cannot hold two)
+    req = navigator.mediaDevices.getUserMedia({ video: { facingMode: want }, audio: false });
+  }
+  req.then((s) => {
+    stream = s;
+    facing = want;
+    mirror = want === 'user';
+    video.srcObject = s;
+    return video.play();
+  }).then(() => {
+    startEl.classList.add('hide');
+    dock.classList.add('show');
+    for (const b of dock.querySelectorAll('[data-facing]')) b.classList.toggle('on', b.dataset.facing === facing);
+    if (!hint.dataset.done) { hint.textContent = '指でなぞって引っ張る'; hint.style.opacity = 1; }
+  }).catch((e) => {
+    stopStream();
+    showError(explain(e));
+  });
+}
+for (const b of document.querySelectorAll('[data-facing]')) b.addEventListener('click', () => openCamera(b.dataset.facing));
+
+// ---------- strokes ----------
+// A stroke remembers where the finger first landed (origin) and the direction it first moved.
+// The slice across that direction, centred on the origin, is the source of the ribbon's colours:
+// every cross-section of the ribbon shows that same slice, read live from the video.
+const START_MOVE = 10;      // px the finger must travel before the direction is decided
+const MIN_STEP = 2;         // px between recorded points
+const RETRACT_SEC = 1.6;    // time to shrink back when "戻る" is on
+const MAX_POINTS = 30000;
+
+let widthFrac = 0.15;
+let retract = false;
+const strokes = [];
+const active = new Map(); // pointerId -> stroke
+
+function newStroke(x, y) {
+  return { ox: x, oy: y, pts: [], nx: 0, ny: 0, half: 0, released: -1, dense: null, len: 0, dirty: true };
+}
+
+function addPoint(st, x, y) {
+  if (!st.pts.length) {
+    const dx = x - st.ox, dy = y - st.oy, d = Math.hypot(dx, dy);
+    if (d < START_MOVE) return;
+    st.nx = -dy / d; st.ny = dx / d;
+    st.half = widthFrac * Math.min(viewW, viewH) / 2;
+    st.pts.push({ x: st.ox, y: st.oy }, { x, y });
+    strokes.push(st);
+  } else {
+    const p = st.pts[st.pts.length - 1];
+    if (Math.hypot(x - p.x, y - p.y) < MIN_STEP) return;
+    st.pts.push({ x, y });
+  }
+  st.dirty = true;
+}
+
+// Catmull-Rom resample so fast finger moves still give smooth ribbons
+function densify(st) {
+  const P = st.pts, out = [];
+  for (let i = 0; i < P.length - 1; i++) {
+    const p0 = P[Math.max(i - 1, 0)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(i + 2, P.length - 1)];
+    const n = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 4));
+    for (let k = 0; k < n; k++) {
+      const t = k / n, t2 = t * t, t3 = t2 * t;
+      const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
+      out.push({ x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) });
+    }
+  }
+  out.push(P[P.length - 1]);
+  let s = 0;
+  out[0].s = 0;
+  for (let i = 1; i < out.length; i++) { s += Math.hypot(out[i].x - out[i - 1].x, out[i].y - out[i - 1].y); out[i].s = s; }
+  for (let i = 0; i < out.length; i++) {
+    let tx, ty;
+    if (i === 0) { tx = st.ny; ty = -st.nx; }
+    else { const a = out[Math.max(i - 1, 0)], b = out[Math.min(i + 1, out.length - 1)]; tx = b.x - a.x; ty = b.y - a.y; }
+    const d = Math.hypot(tx, ty) || 1;
+    out[i].nx = -ty / d; out[i].ny = tx / d;
+  }
+  st.dense = out; st.len = s; st.dirty = false;
+}
+
+let verts = new Float32Array(6 * FLOATS * 1024);
+function ensure(n) {
+  if (verts.length >= n) return;
+  let m = verts.length; while (m < n) m *= 2;
+  const v = new Float32Array(m); v.set(verts); verts = v;
+}
+
+function buildGeometry(now) {
+  let n = 0;
+  const put = (x, y, sx, sy, e) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; };
+  // background: full-screen quad, colour taken from the same place it is drawn
+  ensure(6 * FLOATS);
+  put(0, 0, 0, 0, 0); put(viewW, 0, viewW, 0, 0); put(0, viewH, 0, viewH, 0);
+  put(viewW, 0, viewW, 0, 0); put(viewW, viewH, viewW, viewH, 0); put(0, viewH, 0, viewH, 0);
+  for (let si = strokes.length - 1; si >= 0; si--) {
+    const st = strokes[si];
+    if (retract && st.released >= 0 && now - st.released >= RETRACT_SEC * 1000) { strokes.splice(si, 1); continue; }
+    if (st.dirty) densify(st);
+  }
+  for (const st of strokes) {
+    let limit = st.len;
+    if (retract && st.released >= 0) {
+      const k = Math.min((now - st.released) / 1000 / RETRACT_SEC, 1);
+      limit = st.len * Math.pow(1 - k, 3);
+    }
+    const D = st.dense, h = st.half;
+    const ax = st.ox + st.nx * h, ay = st.oy + st.ny * h;   // slice end on the + side
+    const bx = st.ox - st.nx * h, by = st.oy - st.ny * h;   // slice end on the - side
+    ensure(n + D.length * 6 * FLOATS);
+    for (let i = 0; i < D.length - 1; i++) {
+      const p = D[i];
+      if (p.s >= limit) break;
+      let q = D[i + 1];
+      if (q.s > limit) { const t = (limit - p.s) / (q.s - p.s); q = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: q.nx, ny: q.ny }; }
+      const p1x = p.x + p.nx * h, p1y = p.y + p.ny * h, p2x = p.x - p.nx * h, p2y = p.y - p.ny * h;
+      const q1x = q.x + q.nx * h, q1y = q.y + q.ny * h, q2x = q.x - q.nx * h, q2y = q.y - q.ny * h;
+      put(p1x, p1y, ax, ay, 1); put(p2x, p2y, bx, by, -1); put(q1x, q1y, ax, ay, 1);
+      put(q1x, q1y, ax, ay, 1); put(p2x, p2y, bx, by, -1); put(q2x, q2y, bx, by, -1);
+    }
+  }
+  return n / FLOATS;
+}
+
+function toLocal(e) { const r = cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+cv.addEventListener('pointerdown', (e) => {
+  if (!stream) return;
+  e.preventDefault();
+  try { cv.setPointerCapture(e.pointerId); } catch (_) {}
+  const [x, y] = toLocal(e);
+  active.set(e.pointerId, newStroke(x, y));
+  if (hint.textContent) { hint.style.opacity = 0; hint.dataset.done = '1'; }
+});
+cv.addEventListener('pointermove', (e) => {
+  const st = active.get(e.pointerId);
+  if (!st) return;
+  e.preventDefault();
+  const list = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+  for (const c of (list.length ? list : [e])) { const [x, y] = toLocal(c); addPoint(st, x, y); }
+});
+function release(e) {
+  const st = active.get(e.pointerId);
+  if (!st) return;
+  active.delete(e.pointerId);
+  st.released = performance.now();
+  let total = 0;
+  for (const s of strokes) total += s.pts.length;
+  while (total > MAX_POINTS && strokes.length > 1 && strokes[0].released >= 0) total -= strokes.shift().pts.length;
+}
+cv.addEventListener('pointerup', release);
+cv.addEventListener('pointercancel', release);
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('dblclick', (e) => e.preventDefault());
+
+$('reset').addEventListener('click', () => { strokes.length = 0; active.clear(); });
+$('back').addEventListener('click', (ev) => {
+  retract = !retract;
+  ev.currentTarget.textContent = retract ? '戻る: オン' : '戻る: オフ';
+  ev.currentTarget.classList.toggle('on', retract);
+  const now = performance.now();
+  for (const s of strokes) if (s.released >= 0) s.released = now; // already released ribbons start shrinking now
+});
+$('width').addEventListener('input', (ev) => {
+  widthFrac = ev.target.value / 100;
+  $('widthOut').textContent = ev.target.value + '%';
+});
+
+// ---------- draw loop ----------
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!gl) return;
+  if (video.readyState >= 2 && video.videoWidth) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  }
+  const vw = video.videoWidth || viewW, vh = video.videoHeight || viewH;
+  const sa = viewW / viewH, va = vw / vh;
+  const cover = va > sa ? [sa / va, 1] : [1, va / sa];
+  gl.viewport(0, 0, cv.width, cv.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  if (!stream) return;
+  const count = buildGeometry(now);
+  gl.uniform2f(U.uView, viewW, viewH);
+  gl.uniform2f(U.uCover, cover[0], cover[1]);
+  gl.uniform1f(U.uMirror, mirror ? 1 : 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  const bytes = count * FLOATS * 4;
+  if (bytes > vboCap) { vboCap = Math.max(bytes, vboCap * 2); gl.bufferData(gl.ARRAY_BUFFER, vboCap, gl.DYNAMIC_DRAW); }
+  gl.bufferSubData(gl.ARRAY_BUFFER, 0, verts, 0, count * FLOATS);
+  gl.drawArrays(gl.TRIANGLES, 0, count);
+}
+requestAnimationFrame(frame);
+
+if (TEST) window.__pst = { strokes, get retract() { return retract; } };
+</script>
+</body>
+</html>
