@@ -33,7 +33,7 @@ html, body {
 #err.show { display: block; }
 #hint {
   position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 16px);
-  text-align: center; pointer-events: none; transition: opacity .6s; text-shadow: 0 1px 4px #000;
+  text-align: center; pointer-events: none; transition: opacity .6s; text-shadow: 0 1px 4px #000; white-space: pre-line;
 }
 #dock {
   position: fixed; left: 0; right: 0; bottom: 0; display: none;
@@ -144,21 +144,27 @@ if (!gl) {
     if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
     return sh;
   };
-  prog = gl.createProgram();
-  gl.attachShader(prog, compile(gl.VERTEX_SHADER, 'vert'));
-  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, 'frag'));
-  gl.bindAttribLocation(prog, 0, 'aPos');
-  gl.bindAttribLocation(prog, 1, 'aSrc');
-  gl.bindAttribLocation(prog, 2, 'aEdge');
-  gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
+  try {
+    prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl.VERTEX_SHADER, 'vert'));
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, 'frag'));
+    gl.bindAttribLocation(prog, 0, 'aPos');
+    gl.bindAttribLocation(prog, 1, 'aSrc');
+    gl.bindAttribLocation(prog, 2, 'aEdge');
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+  } catch (e) {
+    console.error(e);
+    prog = null;
+    showError('画面の描画の準備（シェーダー）に失敗したため表示できません。別のブラウザーで開いてみてください。');
+  }
 }
 
 const FLOATS = 5; // aPos.xy, aSrc.xy, aEdge
 let vbo = null, vboCap = 0;
 const U = {};
-if (gl) {
+if (prog) {
   for (const k of ['uView', 'uCover', 'uMirror', 'uVideo']) U[k] = gl.getUniformLocation(prog, k);
   gl.bindVertexArray(gl.createVertexArray());
   vbo = gl.createBuffer();
@@ -239,9 +245,21 @@ function explain(e) {
   return 'カメラを開けませんでした（' + (n || 'エラー') + '）。';
 }
 
+let openSeq = 0; // only the latest camera request may take over
+
+function notice(text) {
+  hint.textContent = text;
+  hint.style.opacity = 1;
+  clearTimeout(notice.t);
+  notice.until = performance.now() + 4000;
+  notice.t = setTimeout(() => { hint.style.opacity = 0; }, 4000);
+}
+
 // Called directly from the button's click handler, so iOS sees it as a user action.
-function openCamera(want) {
-  if (!gl) return;
+// fallback: the camera that was running before a switch; reopened if the new one fails.
+function openCamera(want, fallback) {
+  if (!prog) return;
+  const seq = ++openSeq;
   errEl.classList.remove('show');
   let req;
   if (TEST) {
@@ -256,22 +274,32 @@ function openCamera(want) {
     req = navigator.mediaDevices.getUserMedia({ video: { facingMode: want }, audio: false });
   }
   req.then((s) => {
+    if (seq !== openSeq) { if (!TEST) for (const t of s.getTracks()) t.stop(); throw { stale: true }; }
     stream = s;
     facing = want;
     mirror = want === 'user';
     video.srcObject = s;
     return video.play();
   }).then(() => {
+    if (seq !== openSeq) return;
     startEl.classList.add('hide');
     dock.classList.add('show');
     for (const b of dock.querySelectorAll('[data-facing]')) b.classList.toggle('on', b.dataset.facing === facing);
-    if (!hint.dataset.done) { hint.textContent = '指でなぞって引っ張る'; hint.style.opacity = 1; }
+    if (!hint.dataset.done && !(performance.now() < notice.until)) { hint.textContent = '指でなぞって引っ張る'; hint.style.opacity = 1; }
   }).catch((e) => {
+    if ((e && e.stale) || seq !== openSeq) return; // a newer request is in charge
     stopStream();
+    if (fallback && fallback !== want) {
+      notice(explain(e) + '\n元のカメラに戻します。');
+      openCamera(fallback);
+      return;
+    }
     showError(explain(e));
   });
 }
-for (const b of document.querySelectorAll('[data-facing]')) b.addEventListener('click', () => openCamera(b.dataset.facing));
+for (const b of document.querySelectorAll('[data-facing]')) {
+  b.addEventListener('click', () => openCamera(b.dataset.facing, facing));
+}
 
 // ---------- strokes ----------
 // A stroke remembers where the finger first landed (origin) and the direction it first moved.
@@ -423,7 +451,7 @@ $('width').addEventListener('input', (ev) => {
 // ---------- draw loop ----------
 function frame(now) {
   requestAnimationFrame(frame);
-  if (!gl) return;
+  if (!prog) return;
   if (video.readyState >= 2 && video.videoWidth) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
   }
