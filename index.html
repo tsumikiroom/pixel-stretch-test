@@ -50,7 +50,7 @@ button {
   border: 1px solid var(--edge); border-radius: 14px; min-height: 56px; padding: 0 10px;
 }
 button.on { background: var(--hot); border-color: var(--hot); color: #fff; }
-label.knob { display: grid; grid-template-columns: 2.6em 1fr 3em; gap: 10px; align-items: center; min-height: 48px; }
+label.knob { display: grid; grid-template-columns: 3.2em 1fr 3em; gap: 10px; align-items: center; min-height: 48px; }
 label.knob output { text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; }
 label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
 </style>
@@ -78,6 +78,12 @@ label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
   <div class="line">
     <label class="knob"><span>帯幅</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
   </div>
+  <div class="line">
+    <label class="knob"><span>細り</span><input id="taper" type="range" min="0" max="100" step="1" value="60"><output id="taperOut">60%</output></label>
+  </div>
+  <div class="line">
+    <label class="knob"><span>ねじれ</span><input id="twist" type="range" min="0" max="4" step="0.25" value="1"><output id="twistOut">1</output></label>
+  </div>
 </div>
 
 <script type="x-shader/x-vertex" id="vert">#version 300 es
@@ -85,17 +91,20 @@ label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
 in vec2 aPos;
 in vec2 aSrc;
 in float aEdge;          // -1 .. 1 across a ribbon (0 for the background)
+in float aShade;         // 1 = facing the viewer, darker where the twisted ribbon turns away
 uniform vec2 uView;      // CSS px
 uniform vec2 uCover;     // fraction of the video that is visible (cover fit)
 uniform float uMirror;   // 1 = flip left/right (front camera)
 out vec2 vUV;
 out float vEdge;
+out float vShade;
 void main() {
   vec2 s = aSrc / uView;
   vec2 uv = (s - 0.5) * uCover + 0.5;
   if (uMirror > 0.5) uv.x = 1.0 - uv.x;
   vUV = uv;
   vEdge = aEdge;
+  vShade = aShade;
   vec2 p = aPos / uView * 2.0 - 1.0;
   gl_Position = vec4(p.x, -p.y, 0.0, 1.0);
 }
@@ -105,9 +114,10 @@ precision highp float;
 uniform sampler2D uVideo;
 in vec2 vUV;
 in float vEdge;
+in float vShade;
 out vec4 outColor;
 void main() {
-  vec3 c = texture(uVideo, vUV).rgb;
+  vec3 c = texture(uVideo, vUV).rgb * vShade;
   // soften only the outermost pixel of the ribbon so its border does not stair-step
   float e = abs(vEdge);
   float w = max(fwidth(vEdge), 1e-4);
@@ -151,6 +161,7 @@ if (!gl) {
     gl.bindAttribLocation(prog, 0, 'aPos');
     gl.bindAttribLocation(prog, 1, 'aSrc');
     gl.bindAttribLocation(prog, 2, 'aEdge');
+    gl.bindAttribLocation(prog, 3, 'aShade');
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
@@ -161,7 +172,7 @@ if (!gl) {
   }
 }
 
-const FLOATS = 5; // aPos.xy, aSrc.xy, aEdge
+const FLOATS = 6; // aPos.xy, aSrc.xy, aEdge, aShade
 let vbo = null, vboCap = 0;
 const U = {};
 if (prog) {
@@ -173,6 +184,7 @@ if (prog) {
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, stride, 0);
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, stride, 16);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 20);
   const tex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -309,28 +321,33 @@ const START_MOVE = 10;      // px the finger must travel before the direction is
 const MIN_STEP = 2;         // px between recorded points
 const RETRACT_SEC = 1.6;    // time to shrink back when "戻る" is on
 const MAX_POINTS = 30000;
+const FAST = 2.5;           // px/ms: finger speed at which the ribbon is thinnest
 
 let widthFrac = 0.15;
+let taper = 0.6;            // 0 = same width all along, 1 = thins to a point at the finger
+let twist = 1;              // turns per screen height of ribbon length
 let retract = false;
 const strokes = [];
 const active = new Map(); // pointerId -> stroke
 
-function newStroke(x, y) {
-  return { ox: x, oy: y, pts: [], nx: 0, ny: 0, half: 0, released: -1, dense: null, len: 0, dirty: true };
+function newStroke(x, y, t) {
+  return { ox: x, oy: y, t0: t, pts: [], nx: 0, ny: 0, half: 0, released: -1, dense: null, len: 0, dirty: true };
 }
 
-function addPoint(st, x, y) {
+// v: smoothed finger speed (px/ms) at each point; fast pulls make the ribbon thinner
+function addPoint(st, x, y, t) {
   if (!st.pts.length) {
     const dx = x - st.ox, dy = y - st.oy, d = Math.hypot(dx, dy);
     if (d < START_MOVE) return;
     st.nx = -dy / d; st.ny = dx / d;
     st.half = widthFrac * Math.min(viewW, viewH) / 2;
-    st.pts.push({ x: st.ox, y: st.oy }, { x, y });
+    st.pts.push({ x: st.ox, y: st.oy, t: st.t0, v: 0 }, { x, y, t, v: 0 });
     strokes.push(st);
   } else {
     const p = st.pts[st.pts.length - 1];
-    if (Math.hypot(x - p.x, y - p.y) < MIN_STEP) return;
-    st.pts.push({ x, y });
+    const d = Math.hypot(x - p.x, y - p.y);
+    if (d < MIN_STEP) return;
+    st.pts.push({ x, y, t, v: p.v * 0.7 + 0.3 * d / Math.max(t - p.t, 1) });
   }
   st.dirty = true;
 }
@@ -344,7 +361,7 @@ function densify(st) {
     for (let k = 0; k < n; k++) {
       const t = k / n, t2 = t * t, t3 = t2 * t;
       const f = (a, b, c, d) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
-      out.push({ x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y) });
+      out.push({ x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y), v: p1.v + (p2.v - p1.v) * t });
     }
   }
   out.push(P[P.length - 1]);
@@ -370,11 +387,12 @@ function ensure(n) {
 
 function buildGeometry(now) {
   let n = 0;
-  const put = (x, y, sx, sy, e) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; };
+  const put = (x, y, sx, sy, e, sh) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; verts[n++] = sh; };
+  const twistRate = twist * Math.PI * 2 / viewH; // radians per px of ribbon length
   // background: full-screen quad, colour taken from the same place it is drawn
   ensure(6 * FLOATS);
-  put(0, 0, 0, 0, 0); put(viewW, 0, viewW, 0, 0); put(0, viewH, 0, viewH, 0);
-  put(viewW, 0, viewW, 0, 0); put(viewW, viewH, viewW, viewH, 0); put(0, viewH, 0, viewH, 0);
+  put(0, 0, 0, 0, 0, 1); put(viewW, 0, viewW, 0, 0, 1); put(0, viewH, 0, viewH, 0, 1);
+  put(viewW, 0, viewW, 0, 0, 1); put(viewW, viewH, viewW, viewH, 0, 1); put(0, viewH, 0, viewH, 0, 1);
   for (let si = strokes.length - 1; si >= 0; si--) {
     const st = strokes[si];
     if (retract && st.released >= 0 && now - st.released >= RETRACT_SEC * 1000) { strokes.splice(si, 1); continue; }
@@ -390,15 +408,26 @@ function buildGeometry(now) {
     const ax = st.ox + st.nx * h, ay = st.oy + st.ny * h;   // slice end on the + side
     const bx = st.ox - st.nx * h, by = st.oy - st.ny * h;   // slice end on the - side
     ensure(n + D.length * 6 * FLOATS);
+    // Half width at a point: thins towards the finger (taper) and where the finger moved fast.
+    // The twist turns the slice around the path; seen from the front its width becomes w*cos,
+    // and past a quarter turn the slice shows mirrored, like the back of a ribbon.
+    const span = Math.max(limit, 1);
+    const cross = (p) => {
+      const k = p.s / span;
+      const w = h * (1 - taper * k * k) * (1 - 0.6 * Math.min(p.v / FAST, 1));
+      const c = Math.cos(p.s * twistRate);
+      return { w: w * c, sh: c >= 0 ? 0.55 + 0.45 * c : 0.45 - 0.3 * c };
+    };
     for (let i = 0; i < D.length - 1; i++) {
       const p = D[i];
       if (p.s >= limit) break;
       let q = D[i + 1];
-      if (q.s > limit) { const t = (limit - p.s) / (q.s - p.s); q = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: q.nx, ny: q.ny }; }
-      const p1x = p.x + p.nx * h, p1y = p.y + p.ny * h, p2x = p.x - p.nx * h, p2y = p.y - p.ny * h;
-      const q1x = q.x + q.nx * h, q1y = q.y + q.ny * h, q2x = q.x - q.nx * h, q2y = q.y - q.ny * h;
-      put(p1x, p1y, ax, ay, 1); put(p2x, p2y, bx, by, -1); put(q1x, q1y, ax, ay, 1);
-      put(q1x, q1y, ax, ay, 1); put(p2x, p2y, bx, by, -1); put(q2x, q2y, bx, by, -1);
+      if (q.s > limit) { const t = (limit - p.s) / (q.s - p.s); q = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: q.nx, ny: q.ny, v: p.v + (q.v - p.v) * t, s: limit }; }
+      const cp = cross(p), cq = cross(q);
+      const p1x = p.x + p.nx * cp.w, p1y = p.y + p.ny * cp.w, p2x = p.x - p.nx * cp.w, p2y = p.y - p.ny * cp.w;
+      const q1x = q.x + q.nx * cq.w, q1y = q.y + q.ny * cq.w, q2x = q.x - q.nx * cq.w, q2y = q.y - q.ny * cq.w;
+      put(p1x, p1y, ax, ay, 1, cp.sh); put(p2x, p2y, bx, by, -1, cp.sh); put(q1x, q1y, ax, ay, 1, cq.sh);
+      put(q1x, q1y, ax, ay, 1, cq.sh); put(p2x, p2y, bx, by, -1, cp.sh); put(q2x, q2y, bx, by, -1, cq.sh);
     }
   }
   return n / FLOATS;
@@ -411,7 +440,7 @@ cv.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   try { cv.setPointerCapture(e.pointerId); } catch (_) {}
   const [x, y] = toLocal(e);
-  active.set(e.pointerId, newStroke(x, y));
+  active.set(e.pointerId, newStroke(x, y, e.timeStamp));
   if (hint.textContent) { hint.style.opacity = 0; hint.dataset.done = '1'; }
 });
 cv.addEventListener('pointermove', (e) => {
@@ -419,7 +448,7 @@ cv.addEventListener('pointermove', (e) => {
   if (!st) return;
   e.preventDefault();
   const list = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
-  for (const c of (list.length ? list : [e])) { const [x, y] = toLocal(c); addPoint(st, x, y); }
+  for (const c of (list.length ? list : [e])) { const [x, y] = toLocal(c); addPoint(st, x, y, c.timeStamp || performance.now()); }
 });
 function release(e) {
   const st = active.get(e.pointerId);
@@ -446,6 +475,14 @@ $('back').addEventListener('click', (ev) => {
 $('width').addEventListener('input', (ev) => {
   widthFrac = ev.target.value / 100;
   $('widthOut').textContent = ev.target.value + '%';
+});
+$('taper').addEventListener('input', (ev) => {
+  taper = ev.target.value / 100;
+  $('taperOut').textContent = ev.target.value + '%';
+});
+$('twist').addEventListener('input', (ev) => {
+  twist = +ev.target.value;
+  $('twistOut').textContent = ev.target.value;
 });
 
 // ---------- draw loop ----------
