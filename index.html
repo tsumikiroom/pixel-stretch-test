@@ -319,7 +319,7 @@ for (const b of document.querySelectorAll('[data-facing]')) {
 // every cross-section of the ribbon shows that same slice, read live from the video.
 const START_MOVE = 10;      // px the finger must travel before the direction is decided
 const MIN_STEP = 2;         // px between recorded points
-const RETRACT_SEC = 1.6;    // time to shrink back when "戻る" is on
+const RETRACT_SEC = 1.6;    // time for a released ribbon to shrink away along its path when "戻る" is on
 const MAX_POINTS = 30000;
 const FAST = 2.5;           // px/ms: finger speed at which the ribbon is thinnest
 
@@ -399,10 +399,11 @@ function buildGeometry(now) {
     if (st.dirty) densify(st);
   }
   for (const st of strokes) {
-    let limit = st.len;
+    // "戻る": the end at the touch point runs along the path to where the finger let go
+    let cut = 0;
     if (retract && st.released >= 0) {
       const k = Math.min((now - st.released) / 1000 / RETRACT_SEC, 1);
-      limit = st.len * Math.pow(1 - k, 3);
+      cut = st.len * (1 - Math.pow(1 - k, 3));
     }
     const D = st.dense, h = st.half;
     const ax = st.ox + st.nx * h, ay = st.oy + st.ny * h;   // slice end on the + side
@@ -411,7 +412,7 @@ function buildGeometry(now) {
     // Half width at a point: thins towards the finger (taper) and where the finger moved fast.
     // The twist turns the slice around the path; seen from the front its width becomes w*cos,
     // and past a quarter turn the slice shows mirrored, like the back of a ribbon.
-    const span = Math.max(limit, 1);
+    const span = Math.max(st.len, 1);
     const cross = (p) => {
       const k = p.s / span;
       const w = h * (1 - taper * k * k) * (1 - 0.6 * Math.min(p.v / FAST, 1));
@@ -419,10 +420,10 @@ function buildGeometry(now) {
       return { w: w * c, sh: c >= 0 ? 0.55 + 0.45 * c : 0.45 - 0.3 * c };
     };
     for (let i = 0; i < D.length - 1; i++) {
-      const p = D[i];
-      if (p.s >= limit) break;
-      let q = D[i + 1];
-      if (q.s > limit) { const t = (limit - p.s) / (q.s - p.s); q = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: q.nx, ny: q.ny, v: p.v + (q.v - p.v) * t, s: limit }; }
+      let p = D[i];
+      const q = D[i + 1];
+      if (q.s <= cut) continue;
+      if (p.s < cut) { const t = (cut - p.s) / (q.s - p.s); p = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: p.nx, ny: p.ny, v: p.v + (q.v - p.v) * t, s: cut }; }
       const cp = cross(p), cq = cross(q);
       const p1x = p.x + p.nx * cp.w, p1y = p.y + p.ny * cp.w, p2x = p.x - p.nx * cp.w, p2y = p.y - p.ny * cp.w;
       const q1x = q.x + q.nx * cq.w, q1y = q.y + q.ny * cq.w, q2x = q.x - q.nx * cq.w, q2y = q.y - q.ny * cq.w;
