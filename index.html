@@ -1,58 +1,110 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#ffffff">
 <title>Pixel Stretch Touch</title>
 <link rel="icon" href="data:,">
 <style>
-:root { --ink: #f4f2ee; --mute: #b9b5ad; --bar: rgba(16,16,18,.72); --edge: rgba(255,255,255,.18); --hot: #ff4d2e; }
+/* Line-drawing UI: white paper, 1px black lines, solid / dashed rules, capsule shapes, bold plain grotesque type */
+:root { --ink: #111; --paper: #fff; --line: 1px solid var(--ink); }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html, body {
   margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none;
   background: #000; color: var(--ink); touch-action: none;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
-  font: 16px/1.4 system-ui, -apple-system, "Hiragino Sans", "Segoe UI", sans-serif;
+  font: 500 15px/1.3 "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif; letter-spacing: -.01em;
 }
 #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 #cam { position: fixed; left: 0; top: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+
+button {
+  font: inherit; color: var(--ink); background: var(--paper); cursor: pointer; touch-action: manipulation;
+  border: var(--line); border-radius: 999px; min-height: 44px; padding: 0 14px;
+}
+button.on { background: var(--ink); color: var(--paper); }
+.small { font-size: 12px; font-weight: 700; }
+
+/* ---- start sheet ---- */
 #start {
-  position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 16px;
-  padding: calc(env(safe-area-inset-top, 0px) + 24px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
-  background: #000;
+  position: fixed; inset: 0; overflow-y: auto; touch-action: pan-y; background: var(--paper);
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
 }
-#start h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; }
-#start p { margin: 0 0 12px; color: var(--mute); }
-#start button { min-height: 88px; font-size: 22px; font-weight: 600; border-radius: 18px; }
 #start.hide { display: none; }
-#err {
-  display: none; margin-top: 8px; padding: 14px 16px; border-radius: 14px;
-  background: rgba(255,77,46,.16); border: 1px solid var(--hot); white-space: pre-line;
+.sheet {
+  min-height: 100%; display: flex; flex-direction: column; gap: 18px;
+  border: var(--line); border-radius: 22px; padding: 16px 18px 18px;
 }
+.meta { display: flex; justify-content: space-between; gap: 12px; }
+.sheet h1 { margin: auto 0 0; font-size: 60px; line-height: .88; font-weight: 700; letter-spacing: -.045em; }
+.diagram { display: block; width: 100%; height: auto; overflow: visible; }
+.diagram text { font: 700 11px "Helvetica Neue", Helvetica, Arial, sans-serif; fill: var(--ink); }
+.sheet p { margin: 0; max-width: 30em; }
+.choose { display: grid; gap: 8px; }
+.choose button {
+  min-height: 60px; padding: 0 22px; display: flex; justify-content: space-between; align-items: center;
+  font-size: 18px; font-weight: 700; letter-spacing: -.02em;
+}
+.choose button:active { background: var(--ink); color: var(--paper); }
+#err { display: none; padding: 12px 14px; border: 1px dashed var(--ink); border-radius: 14px; white-space: pre-line; }
+#err::before { content: "Error"; display: block; margin-bottom: 4px; font-size: 12px; font-weight: 700; }
 #err.show { display: block; }
+.sheet .foot { margin-top: auto; padding-top: 12px; border-top: 1px dashed var(--ink); }
+
+/* ---- messages over the video ---- */
 #hint {
-  position: fixed; left: 16px; right: 16px; top: calc(env(safe-area-inset-top, 0px) + 16px);
-  text-align: center; pointer-events: none; transition: opacity .6s; text-shadow: 0 1px 4px #000; white-space: pre-line;
+  position: fixed; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 14px); transform: translateX(-50%);
+  width: max-content; max-width: calc(100% - 32px); padding: 8px 16px;
+  background: var(--paper); border: var(--line); border-radius: 18px;
+  font-size: 14px; font-weight: 700; text-align: center; white-space: pre-line; pointer-events: none; transition: opacity .6s;
 }
+#hint:empty { display: none; }
+
+/* ---- control card ---- */
 #dock {
-  position: fixed; left: 0; right: 0; bottom: 0; display: none;
-  padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(16px, env(safe-area-inset-left, 0px));
-  background: var(--bar); border-top: 1px solid var(--edge);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  position: fixed; display: none; padding: 8px;
+  left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+  background: var(--paper); border: var(--line); border-radius: 22px;
 }
 #dock.show { display: block; }
-.line { display: flex; gap: 8px; align-items: center; }
-.line + .line { margin-top: 8px; }
-.line button { flex: 1; }
-button {
-  font: inherit; color: var(--ink); background: rgba(255,255,255,.08); touch-action: manipulation;
-  border: 1px solid var(--edge); border-radius: 14px; min-height: 56px; padding: 0 10px;
+.bar { display: flex; gap: 6px; align-items: center; }
+.bar button { flex: 1; padding: 0 6px; font-size: 14px; font-weight: 700; }
+.seg { flex: 2; display: flex; border: var(--line); border-radius: 999px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; min-height: 42px; }
+.seg button + button { border-left: var(--line); }
+#fold { flex: 0 0 44px; padding: 0; display: grid; place-items: center; }
+#fold svg { transition: transform .2s; }
+#dock.folded #fold svg { transform: rotate(180deg); }
+.knobs { margin-top: 8px; padding: 0 6px; border-top: 1px solid var(--ink); }
+#dock.folded .knobs { display: none; }
+label.knob {
+  display: grid; grid-template-columns: 4.2em 1fr 2.8em; gap: 10px; align-items: center; min-height: 44px;
+  font-size: 15px; font-weight: 700; letter-spacing: -.01em;
 }
-button.on { background: var(--hot); border-color: var(--hot); color: #fff; }
-label.knob { display: grid; grid-template-columns: 3.2em 1fr 3em; gap: 10px; align-items: center; min-height: 48px; }
-label.knob output { text-align: right; color: var(--mute); font-variant-numeric: tabular-nums; }
-label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
+label.knob + label.knob { border-top: 1px solid var(--ink); }
+label.knob output { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* slider = a hairline ruler with tick marks and a ringed dot */
+input[type=range] {
+  --tick: 10%;
+  -webkit-appearance: none; appearance: none; width: 100%; height: 44px; margin: 0; background:
+    linear-gradient(var(--ink), var(--ink)) center / calc(100% - 16px) 1px no-repeat,
+    repeating-linear-gradient(90deg, var(--ink) 0 1px, transparent 1px var(--tick)) center / calc(100% - 16px) 7px no-repeat,
+    linear-gradient(var(--ink), var(--ink)) right 8px center / 1px 7px no-repeat;
+}
+input[type=range]:focus { outline: none; }
+input[type=range]::-webkit-slider-runnable-track { height: 44px; background: transparent; }
+input[type=range]::-moz-range-track { height: 44px; background: transparent; }
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; margin-top: 14px; border-radius: 50%;
+  background: var(--ink); border: var(--line); box-shadow: inset 0 0 0 3px var(--paper);
+}
+input[type=range]::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%; box-sizing: border-box;
+  background: var(--ink); border: var(--line); box-shadow: inset 0 0 0 3px var(--paper);
+}
 </style>
 </head>
 <body>
@@ -61,28 +113,47 @@ label.knob input { width: 100%; height: 40px; accent-color: var(--hot); }
 <div id="hint"></div>
 
 <div id="start">
-  <h1>Pixel Stretch Touch</h1>
-  <p>カメラを選ぶと映像が出ます。指でなぞると、触った所の色が帯になって伸びます。映像はこの端末の外に出ません。</p>
-  <button data-facing="user">インカメラ</button>
-  <button data-facing="environment">アウトカメラ</button>
-  <div id="err"></div>
+  <div class="sheet">
+    <div class="meta small"><span>No. 1</span><span>Slit-scan / Camera</span></div>
+    <h1>Pixel<br>Stretch<br>Touch.</h1>
+    <svg class="diagram" viewBox="0 0 320 150" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1">
+      <!-- the slice taken at the touch point, stretched along the drag into a ribbon -->
+      <path d="M40 46 C120 8, 190 112, 278 58" />
+      <path d="M40 94 C120 56, 200 138, 278 72" />
+      <path d="M40 70 C120 32, 195 125, 278 65" stroke-dasharray="4 4" />
+      <path d="M40 46 V94 M35 46 H45 M35 94 H45" />
+      <circle cx="40" cy="70" r="3" fill="currentColor" stroke="none" />
+      <circle cx="292" cy="65" r="11" />
+      <circle cx="292" cy="65" r="1.5" fill="currentColor" stroke="none" />
+      <text x="40" y="116" text-anchor="middle" stroke="none">now</text>
+      <text x="292" y="94" text-anchor="middle" stroke="none">n sec ago</text>
+      <text x="40" y="30" text-anchor="middle" stroke="none">slice</text>
+    </svg>
+    <p>Pick a camera, then drag across the picture. The pixels under your finger stretch out into a ribbon that runs back in time: the touch point shows now, the far end shows the video from a moment ago.</p>
+    <div class="choose">
+      <button data-facing="user"><span>Front camera</span><span aria-hidden="true">&rarr;</span></button>
+      <button data-facing="environment"><span>Back camera</span><span aria-hidden="true">&rarr;</span></button>
+    </div>
+    <div id="err"></div>
+    <div class="meta small foot"><span>Video stays on this device</span><span>HTTPS</span></div>
+  </div>
 </div>
 
 <div id="dock">
-  <div class="line">
-    <button data-facing="user">イン</button>
-    <button data-facing="environment">アウト</button>
-    <button id="reset">リセット</button>
-    <button id="back">戻る: オフ</button>
+  <div class="bar">
+    <div class="seg">
+      <button data-facing="user">Front</button>
+      <button data-facing="environment">Back</button>
+    </div>
+    <button id="reset">Reset</button>
+    <button id="back" aria-pressed="false">Retract</button>
+    <button id="fold" aria-label="Hide controls" aria-expanded="true"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M3 6l5 5 5-5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
   </div>
-  <div class="line">
-    <label class="knob"><span>帯幅</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
-  </div>
-  <div class="line">
-    <label class="knob"><span>細り</span><input id="taper" type="range" min="0" max="100" step="1" value="60"><output id="taperOut">60%</output></label>
-  </div>
-  <div class="line">
-    <label class="knob"><span>ねじれ</span><input id="twist" type="range" min="0" max="4" step="0.25" value="1"><output id="twistOut">1</output></label>
+  <div class="knobs">
+    <label class="knob"><span>Width</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
+    <label class="knob"><span>Taper</span><input id="taper" type="range" min="0" max="100" step="1" value="60"><output id="taperOut">60%</output></label>
+    <label class="knob"><span>Twist</span><input id="twist" type="range" min="0" max="4" step="0.25" value="1" style="--tick: 25%"><output id="twistOut">1</output></label>
+    <label class="knob"><span>Delay</span><input id="delay" type="range" min="0" max="3" step="0.1" value="1" style="--tick: 16.6667%"><output id="delayOut">1.0s</output></label>
   </div>
 </div>
 
@@ -92,12 +163,14 @@ in vec2 aPos;
 in vec2 aSrc;
 in float aEdge;          // -1 .. 1 across a ribbon (0 for the background)
 in float aShade;         // 1 = facing the viewer, darker where the twisted ribbon turns away
+in float aTime;          // 0 at the touch point .. 1 at the far end of a ribbon; -1 for the background
 uniform vec2 uView;      // CSS px
 uniform vec2 uCover;     // fraction of the video that is visible (cover fit)
 uniform float uMirror;   // 1 = flip left/right (front camera)
 out vec2 vUV;
 out float vEdge;
 out float vShade;
+out float vTime;
 void main() {
   vec2 s = aSrc / uView;
   vec2 uv = (s - 0.5) * uCover + 0.5;
@@ -105,19 +178,39 @@ void main() {
   vUV = uv;
   vEdge = aEdge;
   vShade = aShade;
+  vTime = aTime;
   vec2 p = aPos / uView * 2.0 - 1.0;
   gl_Position = vec4(p.x, -p.y, 0.0, 1.0);
 }
 </script>
 <script type="x-shader/x-fragment" id="frag">#version 300 es
 precision highp float;
-uniform sampler2D uVideo;
+precision highp sampler2DArray;
+uniform sampler2D uVideo;       // live frame
+uniform sampler2DArray uHist;   // ring buffer of past frames (slit-scan)
+uniform float uLag;             // delay at the far end of a ribbon, in captured frames
+uniform float uHead;            // layer holding the newest captured frame
+uniform float uCount;           // layers filled so far
+uniform float uLayers;          // ring size
 in vec2 vUV;
 in float vEdge;
 in float vShade;
+in float vTime;
 out vec4 outColor;
 void main() {
-  vec3 c = texture(uVideo, vUV).rgb * vShade;
+  vec3 c;
+  if (vTime < 0.0 || uCount < 1.0) {
+    c = texture(uVideo, vUV).rgb;
+  } else {
+    // slit-scan: the touch point shows now, the far end shows the video from uLag frames ago
+    float d = min(vTime * uLag, uCount - 1.0);
+    float i0 = floor(d);
+    float i1 = min(i0 + 1.0, uCount - 1.0);
+    float l0 = uHead - i0; if (l0 < 0.0) l0 += uLayers; // ring wrap without mod() rounding
+    float l1 = uHead - i1; if (l1 < 0.0) l1 += uLayers;
+    c = mix(texture(uHist, vec3(vUV, l0)).rgb, texture(uHist, vec3(vUV, l1)).rgb, d - i0);
+  }
+  c *= vShade;
   // soften only the outermost pixel of the ribbon so its border does not stair-step
   float e = abs(vEdge);
   float w = max(fwidth(vEdge), 1e-4);
@@ -145,7 +238,7 @@ function showError(text) {
 const gl = cv.getContext('webgl2', { antialias: true, premultipliedAlpha: false, alpha: false, preserveDrawingBuffer: TEST });
 let prog = null;
 if (!gl) {
-  showError('この端末のブラウザーは WebGL2 に対応していないため表示できません。');
+  showError('This browser does not support WebGL2, so the page cannot be shown.');
 } else {
   const compile = (type, id) => {
     const sh = gl.createShader(type);
@@ -162,21 +255,29 @@ if (!gl) {
     gl.bindAttribLocation(prog, 1, 'aSrc');
     gl.bindAttribLocation(prog, 2, 'aEdge');
     gl.bindAttribLocation(prog, 3, 'aShade');
+    gl.bindAttribLocation(prog, 4, 'aTime');
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
   } catch (e) {
     console.error(e);
     prog = null;
-    showError('画面の描画の準備（シェーダー）に失敗したため表示できません。別のブラウザーで開いてみてください。');
+    showError('The renderer (shader) could not be prepared. Try opening this page in another browser.');
   }
 }
 
-const FLOATS = 6; // aPos.xy, aSrc.xy, aEdge, aShade
-let vbo = null, vboCap = 0;
+const FLOATS = 7; // aPos.xy, aSrc.xy, aEdge, aShade, aTime
+let vbo = null, vboCap = 0, liveTex = null;
+// Slit-scan history: recent frames, shrunk, kept in a ring of texture-array layers.
+const CAP_FPS = 30;          // frames stored per second
+const MAX_DELAY = 3;         // s, top of the Delay slider
+const LAYERS = MAX_DELAY * CAP_FPS + 2;
+const HIST_LONG = 320;       // px, long side of a stored frame
+const hist = { tex: null, w: 0, h: 0, srcW: 0, srcH: 0, head: -1, count: 0, last: -1e9, fboSrc: null, fboDst: null };
+let delaySec = 1;
 const U = {};
 if (prog) {
-  for (const k of ['uView', 'uCover', 'uMirror', 'uVideo']) U[k] = gl.getUniformLocation(prog, k);
+  for (const k of ['uView', 'uCover', 'uMirror', 'uVideo', 'uHist', 'uLag', 'uHead', 'uCount', 'uLayers']) U[k] = gl.getUniformLocation(prog, k);
   gl.bindVertexArray(gl.createVertexArray());
   vbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
@@ -185,15 +286,21 @@ if (prog) {
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, stride, 16);
   gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 20);
-  const tex = gl.createTexture();
+  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, stride, 24);
+  liveTex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.bindTexture(gl.TEXTURE_2D, liveTex);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
   gl.uniform1i(U.uVideo, 0);
+  gl.uniform1i(U.uHist, 1);
+  gl.uniform1f(U.uLayers, LAYERS);
+  hist.fboSrc = gl.createFramebuffer();
+  hist.fboDst = gl.createFramebuffer();
+  allocHistory(1, 1); // placeholder until the first video frame
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 }
@@ -251,10 +358,10 @@ function makeTestStream() {
 
 function explain(e) {
   const n = e && e.name;
-  if (n === 'NotAllowedError' || n === 'SecurityError') return 'カメラの使用が許可されませんでした。ブラウザーの設定でこのページのカメラを許可してから、もう一度ボタンを押してください。';
-  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'このカメラが見つかりませんでした。もう一方のカメラを試してください。';
-  if (n === 'NotReadableError' || n === 'AbortError') return 'カメラを開けませんでした。ほかのアプリがカメラを使っていないか確かめてください。';
-  return 'カメラを開けませんでした（' + (n || 'エラー') + '）。';
+  if (n === 'NotAllowedError' || n === 'SecurityError') return 'Camera access was not allowed. Allow the camera for this page in your browser settings, then tap a button again.';
+  if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'This camera was not found. Try the other one.';
+  if (n === 'NotReadableError' || n === 'AbortError') return 'The camera could not be opened. Check that no other app is using it.';
+  return 'The camera could not be opened (' + (n || 'error') + ').';
 }
 
 let openSeq = 0; // only the latest camera request may take over
@@ -279,7 +386,7 @@ function openCamera(want, fallback) {
     req = Promise.resolve(makeTestStream());
   } else {
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showError('カメラは HTTPS のページでしか使えません。https:// で始まるアドレスで開き直してください。');
+      showError('The camera only works on HTTPS pages. Reopen this page from an https:// address.');
       return;
     }
     stopStream(); // release the old camera first (iOS cannot hold two)
@@ -288,6 +395,7 @@ function openCamera(want, fallback) {
   req.then((s) => {
     if (seq !== openSeq) { if (!TEST) for (const t of s.getTracks()) t.stop(); throw { stale: true }; }
     stream = s;
+    hist.srcW = hist.srcH = 0; // start a fresh history for the new camera
     facing = want;
     mirror = want === 'user';
     video.srcObject = s;
@@ -297,12 +405,12 @@ function openCamera(want, fallback) {
     startEl.classList.add('hide');
     dock.classList.add('show');
     for (const b of dock.querySelectorAll('[data-facing]')) b.classList.toggle('on', b.dataset.facing === facing);
-    if (!hint.dataset.done && !(performance.now() < notice.until)) { hint.textContent = '指でなぞって引っ張る'; hint.style.opacity = 1; }
+    if (!hint.dataset.done && !(performance.now() < notice.until)) { hint.textContent = 'Drag to stretch'; hint.style.opacity = 1; }
   }).catch((e) => {
     if ((e && e.stale) || seq !== openSeq) return; // a newer request is in charge
     stopStream();
     if (fallback && fallback !== want) {
-      notice(explain(e) + '\n元のカメラに戻します。');
+      notice(explain(e) + '\nSwitching back to the previous camera.');
       openCamera(fallback);
       return;
     }
@@ -319,7 +427,7 @@ for (const b of document.querySelectorAll('[data-facing]')) {
 // every cross-section of the ribbon shows that same slice, read live from the video.
 const START_MOVE = 10;      // px the finger must travel before the direction is decided
 const MIN_STEP = 2;         // px between recorded points
-const RETRACT_SEC = 1.6;    // time for a released ribbon to shrink away along its path when "戻る" is on
+const RETRACT_SEC = 1.6;    // time for a released ribbon to shrink away along its path when "Retract" is on
 const MAX_POINTS = 30000;
 const FAST = 2.5;           // px/ms: finger speed at which the ribbon is thinnest
 
@@ -387,19 +495,19 @@ function ensure(n) {
 
 function buildGeometry(now) {
   let n = 0;
-  const put = (x, y, sx, sy, e, sh) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; verts[n++] = sh; };
+  const put = (x, y, sx, sy, e, sh, tm) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; verts[n++] = sh; verts[n++] = tm; };
   const twistRate = twist * Math.PI * 2 / viewH; // radians per px of ribbon length
   // background: full-screen quad, colour taken from the same place it is drawn
   ensure(6 * FLOATS);
-  put(0, 0, 0, 0, 0, 1); put(viewW, 0, viewW, 0, 0, 1); put(0, viewH, 0, viewH, 0, 1);
-  put(viewW, 0, viewW, 0, 0, 1); put(viewW, viewH, viewW, viewH, 0, 1); put(0, viewH, 0, viewH, 0, 1);
+  put(0, 0, 0, 0, 0, 1, -1); put(viewW, 0, viewW, 0, 0, 1, -1); put(0, viewH, 0, viewH, 0, 1, -1);
+  put(viewW, 0, viewW, 0, 0, 1, -1); put(viewW, viewH, viewW, viewH, 0, 1, -1); put(0, viewH, 0, viewH, 0, 1, -1);
   for (let si = strokes.length - 1; si >= 0; si--) {
     const st = strokes[si];
     if (retract && st.released >= 0 && now - st.released >= RETRACT_SEC * 1000) { strokes.splice(si, 1); continue; }
     if (st.dirty) densify(st);
   }
   for (const st of strokes) {
-    // "戻る": the end at the touch point runs along the path to where the finger let go
+    // "Retract": the end at the touch point runs along the path to where the finger let go
     let cut = 0;
     if (retract && st.released >= 0) {
       const k = Math.min((now - st.released) / 1000 / RETRACT_SEC, 1);
@@ -425,10 +533,11 @@ function buildGeometry(now) {
       if (q.s <= cut) continue;
       if (p.s < cut) { const t = (cut - p.s) / (q.s - p.s); p = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: p.nx, ny: p.ny, v: p.v + (q.v - p.v) * t, s: cut }; }
       const cp = cross(p), cq = cross(q);
+      const tp = p.s / span, tq = q.s / span; // 0 = now (touch point) .. 1 = Delay seconds ago (far end)
       const p1x = p.x + p.nx * cp.w, p1y = p.y + p.ny * cp.w, p2x = p.x - p.nx * cp.w, p2y = p.y - p.ny * cp.w;
       const q1x = q.x + q.nx * cq.w, q1y = q.y + q.ny * cq.w, q2x = q.x - q.nx * cq.w, q2y = q.y - q.ny * cq.w;
-      put(p1x, p1y, ax, ay, 1, cp.sh); put(p2x, p2y, bx, by, -1, cp.sh); put(q1x, q1y, ax, ay, 1, cq.sh);
-      put(q1x, q1y, ax, ay, 1, cq.sh); put(p2x, p2y, bx, by, -1, cp.sh); put(q2x, q2y, bx, by, -1, cq.sh);
+      put(p1x, p1y, ax, ay, 1, cp.sh, tp); put(p2x, p2y, bx, by, -1, cp.sh, tp); put(q1x, q1y, ax, ay, 1, cq.sh, tq);
+      put(q1x, q1y, ax, ay, 1, cq.sh, tq); put(p2x, p2y, bx, by, -1, cp.sh, tp); put(q2x, q2y, bx, by, -1, cq.sh, tq);
     }
   }
   return n / FLOATS;
@@ -468,10 +577,15 @@ document.addEventListener('dblclick', (e) => e.preventDefault());
 $('reset').addEventListener('click', () => { strokes.length = 0; active.clear(); });
 $('back').addEventListener('click', (ev) => {
   retract = !retract;
-  ev.currentTarget.textContent = retract ? '戻る: オン' : '戻る: オフ';
   ev.currentTarget.classList.toggle('on', retract);
+  ev.currentTarget.setAttribute('aria-pressed', retract);
   const now = performance.now();
   for (const s of strokes) if (s.released >= 0) s.released = now; // already released ribbons start shrinking now
+});
+$('fold').addEventListener('click', (ev) => {
+  const folded = dock.classList.toggle('folded');
+  ev.currentTarget.setAttribute('aria-expanded', !folded);
+  ev.currentTarget.setAttribute('aria-label', folded ? 'Show controls' : 'Hide controls');
 });
 $('width').addEventListener('input', (ev) => {
   widthFrac = ev.target.value / 100;
@@ -481,10 +595,49 @@ $('taper').addEventListener('input', (ev) => {
   taper = ev.target.value / 100;
   $('taperOut').textContent = ev.target.value + '%';
 });
+$('delay').addEventListener('input', (ev) => {
+  delaySec = +ev.target.value;
+  $('delayOut').textContent = delaySec.toFixed(1) + 's';
+});
 $('twist').addEventListener('input', (ev) => {
   twist = +ev.target.value;
   $('twistOut').textContent = ev.target.value;
 });
+
+// ---------- slit-scan history ----------
+function allocHistory(w, h) {
+  if (hist.tex) gl.deleteTexture(hist.tex);
+  hist.tex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D_ARRAY, hist.tex);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, w, h, w > 1 ? LAYERS : 1);
+  gl.activeTexture(gl.TEXTURE0);
+  hist.w = w; hist.h = h; hist.head = -1; hist.count = 0;
+}
+
+// Copy the live frame, shrunk, into the next ring layer (about CAP_FPS times a second).
+function captureHistory(now) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vw !== hist.srcW || vh !== hist.srcH) {
+    const k = HIST_LONG / Math.max(vw, vh);
+    allocHistory(Math.max(2, Math.round(vw * k)), Math.max(2, Math.round(vh * k)));
+    hist.srcW = vw; hist.srcH = vh;
+  }
+  if (now - hist.last < 1000 / CAP_FPS - 4) return;
+  hist.last = now;
+  hist.head = (hist.head + 1) % LAYERS;
+  hist.count = Math.min(hist.count + 1, LAYERS);
+  gl.bindFramebuffer(gl.READ_FRAMEBUFFER, hist.fboSrc);
+  gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, liveTex, 0);
+  gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, hist.fboDst);
+  gl.framebufferTextureLayer(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, hist.tex, 0, hist.head);
+  gl.blitFramebuffer(0, 0, vw, vh, 0, 0, hist.w, hist.h, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
 
 // ---------- draw loop ----------
 function frame(now) {
@@ -492,6 +645,7 @@ function frame(now) {
   if (!prog) return;
   if (video.readyState >= 2 && video.videoWidth) {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    if (stream) captureHistory(now);
   }
   const vw = video.videoWidth || viewW, vh = video.videoHeight || viewH;
   const sa = viewW / viewH, va = vw / vh;
@@ -504,6 +658,9 @@ function frame(now) {
   gl.uniform2f(U.uView, viewW, viewH);
   gl.uniform2f(U.uCover, cover[0], cover[1]);
   gl.uniform1f(U.uMirror, mirror ? 1 : 0);
+  gl.uniform1f(U.uLag, delaySec * CAP_FPS);
+  gl.uniform1f(U.uHead, Math.max(hist.head, 0));
+  gl.uniform1f(U.uCount, hist.count);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   const bytes = count * FLOATS * 4;
   if (bytes > vboCap) { vboCap = Math.max(bytes, vboCap * 2); gl.bufferData(gl.ARRAY_BUFFER, vboCap, gl.DYNAMIC_DRAW); }
@@ -512,7 +669,7 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-if (TEST) window.__pst = { strokes, get retract() { return retract; } };
+if (TEST) window.__pst = { strokes, hist, get retract() { return retract; } };
 </script>
 </body>
 </html>
