@@ -152,7 +152,6 @@ input[type=range]::-moz-range-thumb {
   <div class="knobs">
     <label class="knob"><span>Width</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
     <label class="knob"><span>Taper</span><input id="taper" type="range" min="0" max="100" step="1" value="60"><output id="taperOut">60%</output></label>
-    <label class="knob"><span>Twist</span><input id="twist" type="range" min="0" max="4" step="0.25" value="1" style="--tick: 25%"><output id="twistOut">1</output></label>
     <label class="knob"><span>Delay</span><input id="delay" type="range" min="0" max="3" step="0.1" value="1" style="--tick: 16.6667%"><output id="delayOut">1.0s</output></label>
   </div>
 </div>
@@ -162,14 +161,12 @@ input[type=range]::-moz-range-thumb {
 in vec2 aPos;
 in vec2 aSrc;
 in float aEdge;          // -1 .. 1 across a ribbon (0 for the background)
-in float aShade;         // 1 = facing the viewer, darker where the twisted ribbon turns away
 in float aTime;          // 0 at the touch point .. 1 at the far end of a ribbon; -1 for the background
 uniform vec2 uView;      // CSS px
 uniform vec2 uCover;     // fraction of the video that is visible (cover fit)
 uniform float uMirror;   // 1 = flip left/right (front camera)
 out vec2 vUV;
 out float vEdge;
-out float vShade;
 out float vTime;
 void main() {
   vec2 s = aSrc / uView;
@@ -177,7 +174,6 @@ void main() {
   if (uMirror > 0.5) uv.x = 1.0 - uv.x;
   vUV = uv;
   vEdge = aEdge;
-  vShade = aShade;
   vTime = aTime;
   vec2 p = aPos / uView * 2.0 - 1.0;
   gl_Position = vec4(p.x, -p.y, 0.0, 1.0);
@@ -194,7 +190,6 @@ uniform float uCount;           // layers filled so far
 uniform float uLayers;          // ring size
 in vec2 vUV;
 in float vEdge;
-in float vShade;
 in float vTime;
 out vec4 outColor;
 void main() {
@@ -210,7 +205,6 @@ void main() {
     float l1 = uHead - i1; if (l1 < 0.0) l1 += uLayers;
     c = mix(texture(uHist, vec3(vUV, l0)).rgb, texture(uHist, vec3(vUV, l1)).rgb, d - i0);
   }
-  c *= vShade;
   // soften only the outermost pixel of the ribbon so its border does not stair-step
   float e = abs(vEdge);
   float w = max(fwidth(vEdge), 1e-4);
@@ -254,8 +248,7 @@ if (!gl) {
     gl.bindAttribLocation(prog, 0, 'aPos');
     gl.bindAttribLocation(prog, 1, 'aSrc');
     gl.bindAttribLocation(prog, 2, 'aEdge');
-    gl.bindAttribLocation(prog, 3, 'aShade');
-    gl.bindAttribLocation(prog, 4, 'aTime');
+    gl.bindAttribLocation(prog, 3, 'aTime');
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
     gl.useProgram(prog);
@@ -266,7 +259,7 @@ if (!gl) {
   }
 }
 
-const FLOATS = 7; // aPos.xy, aSrc.xy, aEdge, aShade, aTime
+const FLOATS = 6; // aPos.xy, aSrc.xy, aEdge, aTime
 let vbo = null, vboCap = 0, liveTex = null;
 // Slit-scan history: recent frames, shrunk, kept in a ring of texture-array layers.
 const CAP_FPS = 30;          // frames stored per second
@@ -286,7 +279,6 @@ if (prog) {
   gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, stride, 8);
   gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2, 1, gl.FLOAT, false, stride, 16);
   gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3, 1, gl.FLOAT, false, stride, 20);
-  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4, 1, gl.FLOAT, false, stride, 24);
   liveTex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, liveTex);
@@ -433,7 +425,6 @@ const FAST = 2.5;           // px/ms: finger speed at which the ribbon is thinne
 
 let widthFrac = 0.15;
 let taper = 0.6;            // 0 = same width all along, 1 = thins to a point at the finger
-let twist = 1;              // turns per screen height of ribbon length
 let retract = false;
 const strokes = [];
 const active = new Map(); // pointerId -> stroke
@@ -495,12 +486,11 @@ function ensure(n) {
 
 function buildGeometry(now) {
   let n = 0;
-  const put = (x, y, sx, sy, e, sh, tm) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; verts[n++] = sh; verts[n++] = tm; };
-  const twistRate = twist * Math.PI * 2 / viewH; // radians per px of ribbon length
+  const put = (x, y, sx, sy, e, tm) => { verts[n++] = x; verts[n++] = y; verts[n++] = sx; verts[n++] = sy; verts[n++] = e; verts[n++] = tm; };
   // background: full-screen quad, colour taken from the same place it is drawn
   ensure(6 * FLOATS);
-  put(0, 0, 0, 0, 0, 1, -1); put(viewW, 0, viewW, 0, 0, 1, -1); put(0, viewH, 0, viewH, 0, 1, -1);
-  put(viewW, 0, viewW, 0, 0, 1, -1); put(viewW, viewH, viewW, viewH, 0, 1, -1); put(0, viewH, 0, viewH, 0, 1, -1);
+  put(0, 0, 0, 0, 0, -1); put(viewW, 0, viewW, 0, 0, -1); put(0, viewH, 0, viewH, 0, -1);
+  put(viewW, 0, viewW, 0, 0, -1); put(viewW, viewH, viewW, viewH, 0, -1); put(0, viewH, 0, viewH, 0, -1);
   for (let si = strokes.length - 1; si >= 0; si--) {
     const st = strokes[si];
     if (retract && st.released >= 0 && now - st.released >= RETRACT_SEC * 1000) { strokes.splice(si, 1); continue; }
@@ -518,26 +508,22 @@ function buildGeometry(now) {
     const bx = st.ox - st.nx * h, by = st.oy - st.ny * h;   // slice end on the - side
     ensure(n + D.length * 6 * FLOATS);
     // Half width at a point: thins towards the finger (taper) and where the finger moved fast.
-    // The twist turns the slice around the path; seen from the front its width becomes w*cos,
-    // and past a quarter turn the slice shows mirrored, like the back of a ribbon.
     const span = Math.max(st.len, 1);
-    const cross = (p) => {
+    const half = (p) => {
       const k = p.s / span;
-      const w = h * (1 - taper * k * k) * (1 - 0.6 * Math.min(p.v / FAST, 1));
-      const c = Math.cos(p.s * twistRate);
-      return { w: w * c, sh: c >= 0 ? 0.55 + 0.45 * c : 0.45 - 0.3 * c };
+      return h * (1 - taper * k * k) * (1 - 0.6 * Math.min(p.v / FAST, 1));
     };
     for (let i = 0; i < D.length - 1; i++) {
       let p = D[i];
       const q = D[i + 1];
       if (q.s <= cut) continue;
       if (p.s < cut) { const t = (cut - p.s) / (q.s - p.s); p = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: p.nx, ny: p.ny, v: p.v + (q.v - p.v) * t, s: cut }; }
-      const cp = cross(p), cq = cross(q);
+      const wp = half(p), wq = half(q);
       const tp = p.s / span, tq = q.s / span; // 0 = now (touch point) .. 1 = Delay seconds ago (far end)
-      const p1x = p.x + p.nx * cp.w, p1y = p.y + p.ny * cp.w, p2x = p.x - p.nx * cp.w, p2y = p.y - p.ny * cp.w;
-      const q1x = q.x + q.nx * cq.w, q1y = q.y + q.ny * cq.w, q2x = q.x - q.nx * cq.w, q2y = q.y - q.ny * cq.w;
-      put(p1x, p1y, ax, ay, 1, cp.sh, tp); put(p2x, p2y, bx, by, -1, cp.sh, tp); put(q1x, q1y, ax, ay, 1, cq.sh, tq);
-      put(q1x, q1y, ax, ay, 1, cq.sh, tq); put(p2x, p2y, bx, by, -1, cp.sh, tp); put(q2x, q2y, bx, by, -1, cq.sh, tq);
+      const p1x = p.x + p.nx * wp, p1y = p.y + p.ny * wp, p2x = p.x - p.nx * wp, p2y = p.y - p.ny * wp;
+      const q1x = q.x + q.nx * wq, q1y = q.y + q.ny * wq, q2x = q.x - q.nx * wq, q2y = q.y - q.ny * wq;
+      put(p1x, p1y, ax, ay, 1, tp); put(p2x, p2y, bx, by, -1, tp); put(q1x, q1y, ax, ay, 1, tq);
+      put(q1x, q1y, ax, ay, 1, tq); put(p2x, p2y, bx, by, -1, tp); put(q2x, q2y, bx, by, -1, tq);
     }
   }
   return n / FLOATS;
@@ -598,10 +584,6 @@ $('taper').addEventListener('input', (ev) => {
 $('delay').addEventListener('input', (ev) => {
   delaySec = +ev.target.value;
   $('delayOut').textContent = delaySec.toFixed(1) + 's';
-});
-$('twist').addEventListener('input', (ev) => {
-  twist = +ev.target.value;
-  $('twistOut').textContent = ev.target.value;
 });
 
 // ---------- slit-scan history ----------
