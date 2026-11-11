@@ -80,7 +80,7 @@ button.on { background: var(--ink); color: var(--paper); }
 .knobs { margin-top: 8px; padding: 0 6px; border-top: 1px solid var(--ink); }
 #dock.folded .knobs { display: none; }
 label.knob {
-  display: grid; grid-template-columns: 4.2em 1fr 2.8em; gap: 10px; align-items: center; min-height: 44px;
+  display: grid; grid-template-columns: 4.8em 1fr 2.8em; gap: 10px; align-items: center; min-height: 44px;
   font-size: 15px; font-weight: 700; letter-spacing: -.01em;
 }
 label.knob + label.knob { border-top: 1px solid var(--ink); }
@@ -153,6 +153,8 @@ input[type=range]::-moz-range-thumb {
     <label class="knob"><span>Width</span><input id="width" type="range" min="3" max="40" step="1" value="15"><output id="widthOut">15%</output></label>
     <label class="knob"><span>Taper</span><input id="taper" type="range" min="0" max="100" step="1" value="60"><output id="taperOut">60%</output></label>
     <label class="knob"><span>Delay</span><input id="delay" type="range" min="0" max="3" step="0.1" value="1" style="--tick: 16.6667%"><output id="delayOut">1.0s</output></label>
+    <label class="knob"><span>Speed</span><input id="speed" type="range" min="0" max="100" step="1" value="70"><output id="speedOut">70%</output></label>
+    <label class="knob"><span>Opacity</span><input id="opacity" type="range" min="20" max="100" step="1" value="70" style="--tick: 12.5%"><output id="opacityOut">70%</output></label>
   </div>
 </div>
 
@@ -188,6 +190,7 @@ uniform float uLag;             // delay at the far end of a ribbon, in captured
 uniform float uHead;            // layer holding the newest captured frame
 uniform float uCount;           // layers filled so far
 uniform float uLayers;          // ring size
+uniform float uAlpha;           // ribbon opacity: below 1, overlapping ribbons (and the video under them) show through
 in vec2 vUV;
 in float vEdge;
 in float vTime;
@@ -209,6 +212,7 @@ void main() {
   float e = abs(vEdge);
   float w = max(fwidth(vEdge), 1e-4);
   float a = 1.0 - smoothstep(1.0 - w * 1.5, 1.0, e);
+  if (vTime >= 0.0) a *= uAlpha;
   outColor = vec4(c, a);
 }
 </script>
@@ -268,9 +272,11 @@ const LAYERS = MAX_DELAY * CAP_FPS + 2;
 const HIST_LONG = 320;       // px, long side of a stored frame
 const hist = { tex: null, w: 0, h: 0, srcW: 0, srcH: 0, head: -1, count: 0, last: -1e9, fboSrc: null, fboDst: null };
 let delaySec = 1;
+let speedLink = 0.7;         // 0 = delay grows evenly along the ribbon, 1 = only fast-drawn stretches add delay
+let opacity = 0.7;
 const U = {};
 if (prog) {
-  for (const k of ['uView', 'uCover', 'uMirror', 'uVideo', 'uHist', 'uLag', 'uHead', 'uCount', 'uLayers']) U[k] = gl.getUniformLocation(prog, k);
+  for (const k of ['uView', 'uCover', 'uMirror', 'uVideo', 'uHist', 'uLag', 'uHead', 'uCount', 'uLayers', 'uAlpha']) U[k] = gl.getUniformLocation(prog, k);
   gl.bindVertexArray(gl.createVertexArray());
   vbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
@@ -474,7 +480,19 @@ function densify(st) {
     const d = Math.hypot(tx, ty) || 1;
     out[i].nx = -ty / d; out[i].ny = tx / d;
   }
-  st.dense = out; st.len = s; st.dirty = false;
+  // Time along the ribbon: each stretch adds delay in proportion to its length, weighted by how fast
+  // the finger moved there (speedLink). Normalised later so the touch point is 0 and the far end 1.
+  let vs = 0;
+  for (let i = 1; i < out.length; i++) vs += (out[i].s - out[i - 1].s) * (out[i].v + out[i - 1].v) / 2;
+  const vAvg = vs > 0 ? vs / s : 1;
+  let tw = 0;
+  out[0].tw = 0;
+  for (let i = 1; i < out.length; i++) {
+    const vm = (out[i].v + out[i - 1].v) / 2;
+    tw += (out[i].s - out[i - 1].s) * ((1 - speedLink) + speedLink * vm / vAvg);
+    out[i].tw = tw;
+  }
+  st.dense = out; st.len = s; st.tw = tw; st.dirty = false;
 }
 
 let verts = new Float32Array(6 * FLOATS * 1024);
@@ -517,9 +535,10 @@ function buildGeometry(now) {
       let p = D[i];
       const q = D[i + 1];
       if (q.s <= cut) continue;
-      if (p.s < cut) { const t = (cut - p.s) / (q.s - p.s); p = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: p.nx, ny: p.ny, v: p.v + (q.v - p.v) * t, s: cut }; }
+      if (p.s < cut) { const t = (cut - p.s) / (q.s - p.s); p = { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t, nx: p.nx, ny: p.ny, v: p.v + (q.v - p.v) * t, s: cut, tw: p.tw + (q.tw - p.tw) * t }; }
       const wp = half(p), wq = half(q);
-      const tp = p.s / span, tq = q.s / span; // 0 = now (touch point) .. 1 = Delay seconds ago (far end)
+      const tspan = st.tw > 0 ? st.tw : 1;
+      const tp = p.tw / tspan, tq = q.tw / tspan; // 0 = now (touch point) .. 1 = Delay seconds ago (far end)
       const p1x = p.x + p.nx * wp, p1y = p.y + p.ny * wp, p2x = p.x - p.nx * wp, p2y = p.y - p.ny * wp;
       const q1x = q.x + q.nx * wq, q1y = q.y + q.ny * wq, q2x = q.x - q.nx * wq, q2y = q.y - q.ny * wq;
       put(p1x, p1y, ax, ay, 1, tp); put(p2x, p2y, bx, by, -1, tp); put(q1x, q1y, ax, ay, 1, tq);
@@ -580,6 +599,15 @@ $('width').addEventListener('input', (ev) => {
 $('taper').addEventListener('input', (ev) => {
   taper = ev.target.value / 100;
   $('taperOut').textContent = ev.target.value + '%';
+});
+$('speed').addEventListener('input', (ev) => {
+  speedLink = ev.target.value / 100;
+  $('speedOut').textContent = ev.target.value + '%';
+  for (const st of strokes) st.dirty = true; // recompute the time along existing ribbons
+});
+$('opacity').addEventListener('input', (ev) => {
+  opacity = ev.target.value / 100;
+  $('opacityOut').textContent = ev.target.value + '%';
 });
 $('delay').addEventListener('input', (ev) => {
   delaySec = +ev.target.value;
@@ -643,6 +671,7 @@ function frame(now) {
   gl.uniform1f(U.uLag, delaySec * CAP_FPS);
   gl.uniform1f(U.uHead, Math.max(hist.head, 0));
   gl.uniform1f(U.uCount, hist.count);
+  gl.uniform1f(U.uAlpha, opacity);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   const bytes = count * FLOATS * 4;
   if (bytes > vboCap) { vboCap = Math.max(bytes, vboCap * 2); gl.bufferData(gl.ARRAY_BUFFER, vboCap, gl.DYNAMIC_DRAW); }
